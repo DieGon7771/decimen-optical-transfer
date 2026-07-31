@@ -178,7 +178,7 @@ function finish(payload: Uint8Array, hashOk: boolean, seconds: number, totalLen:
   const rate = (meta.bytes.length / 1024 / seconds).toFixed(1);
   stats.textContent = `${meta.name} · ${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
 
-  const url = URL.createObjectURL(new Blob([meta.bytes], { type: meta.mime }));
+  const url = URL.createObjectURL(new Blob([meta.bytes.slice()], { type: meta.mime }));
   const heading = document.createElement("div");
   heading.className = "done";
   heading.textContent = "Transfer Complete!";
