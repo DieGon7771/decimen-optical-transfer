@@ -14,14 +14,21 @@
 
 import QRCode from "qrcode";
 import { LTEncoder } from "../shared/fountain";
-import { HEADER_LEN, fnv1a, packFrame, type FrameHeader } from "../shared/protocol";
+import {
+  HEADER_LEN,
+  fnv1a,
+  packFrame,
+  wrapPayload,
+  type FrameHeader,
+} from "../shared/protocol";
 
 const MARGIN = 4; // quiet-zone modules
-const LOOKAHEAD = 3;
+const LOOKAHEAD = 5;
 
 const canvas = document.getElementById("qr") as HTMLCanvasElement;
 const specs = document.getElementById("specs")!;
 const cfgPayload = document.getElementById("cfg-payload") as HTMLSelectElement;
+const cfgFile = document.getElementById("cfg-file") as HTMLInputElement;
 const cfgFps = document.getElementById("cfg-fps") as HTMLSelectElement;
 const cfgBytes = document.getElementById("cfg-bytes") as HTMLSelectElement;
 const cfgEcc = document.getElementById("cfg-ecc") as HTMLSelectElement;
@@ -29,6 +36,7 @@ const cfgSize = document.getElementById("cfg-size") as HTMLInputElement;
 
 const payloadCache = new Map<string, Uint8Array>();
 let generation = 0; // bumped on every restart; stale loops see it and die
+let custom: { bytes: Uint8Array; name: string; mime: string } | null = null;
 
 async function loadPayload(url: string): Promise<Uint8Array | null> {
   const hit = payloadCache.get(url);
@@ -44,6 +52,7 @@ async function main() {
   for (const el of [cfgPayload, cfgFps, cfgBytes, cfgEcc, cfgSize]) {
     el.addEventListener("change", () => void startStream());
   }
+  cfgFile.addEventListener("change", () => void onFilePicked());
   await startStream();
   try {
     await (navigator as Navigator & { wakeLock?: { request(t: "screen"): Promise<unknown> } })
@@ -53,12 +62,36 @@ async function main() {
   }
 }
 
+async function onFilePicked() {
+  const f = cfgFile.files?.[0];
+  if (!f) return;
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  custom = { bytes, name: f.name, mime: f.type || "application/octet-stream" };
+  cfgPayload.value = "custom";
+  void startStream();
+}
+
 async function startStream() {
   const gen = ++generation;
-  const payload = await loadPayload(cfgPayload.value);
-  if (!payload) {
-    specs.textContent = `✗ couldn't load ${cfgPayload.value}`;
-    return;
+  let raw: Uint8Array | null;
+  let name: string;
+  let mime: string;
+  if (cfgPayload.value === "custom") {
+    if (!custom) {
+      specs.textContent = "✗ pick a file below to send it";
+      return;
+    }
+    raw = custom.bytes;
+    name = custom.name;
+    mime = custom.mime;
+  } else {
+    raw = await loadPayload(cfgPayload.value);
+    if (!raw) {
+      specs.textContent = `✗ couldn't load ${cfgPayload.value}`;
+      return;
+    }
+    name = cfgPayload.value.split("/").pop()!;
+    mime = cfgPayload.value.toLowerCase().endsWith(".png") ? "image/png" : "application/octet-stream";
   }
   if (gen !== generation) return; // superseded while fetching
   const txFps = Number(cfgFps.value);
@@ -66,6 +99,7 @@ async function startStream() {
   const ecc = cfgEcc.value as "L" | "M" | "Q" | "H";
   const displayPx = Number(cfgSize.value);
 
+  const payload = wrapPayload(raw, name, mime);
   const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
   const blockLen = frameBytes - HEADER_LEN;
   const encoder = new LTEncoder(payload, blockLen, sessionId);
@@ -112,7 +146,7 @@ async function startStream() {
       sizeCanvas();
       specs.textContent =
         `${txFps} FPS · ${frameBytes} bytes per frame · V${version} · ECC ${ecc} · ` +
-        `${Math.round(payload.length / 1024)} KB payload · K=${encoder.k}`;
+        `${name} (${Math.round(raw.length / 1024)} KB) · K=${encoder.k}`;
     }
     const size = qr.modules.size;
     const data = qr.modules.data;

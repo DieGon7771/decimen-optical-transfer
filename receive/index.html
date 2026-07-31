@@ -21,6 +21,7 @@
             <option>960</option>
             <option selected>1280</option>
             <option>1920</option>
+            <option value="3840">Max (4K)</option>
           </select>
         </label>
         <label>
@@ -28,6 +29,8 @@
           <select id="cfg-capfps">
             <option>30</option>
             <option selected>60</option>
+            <option>90</option>
+            <option>120</option>
           </select>
         </label>
         <label>
@@ -40,9 +43,11 @@
         </label>
       </div>
       <div class="hint" style="text-align: left; padding-top: 8px">
-        Set before starting the camera. 1280-wide is the widest mode iOS runs
-        at a true 60 fps; the fps request is demanded with `exact` first
-        because `ideal: 60` silently delivers 30.
+        Set before starting the camera. The fps request is demanded with
+        `exact` first (iOS silently delivers 30 for plain `ideal: 60`) and
+        falls back to `ideal` with a 30 fps floor. High fps usually trades
+        resolution down: "Max (4K)" only sticks when the camera agrees, so
+        start at 1280 wide for 90/120 fps.
       </div>
     </details>
     <button id="start">Start camera</button>

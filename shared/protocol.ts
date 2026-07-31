@@ -68,6 +68,66 @@ export function fnv1a(bytes: Uint8Array): number {
   return h >>> 0;
 }
 
+// Payload metadata (file name + MIME type). Rather than squeezing these into
+// the fixed 20-byte frame header, the sender prepends a small block to the
+// file bytes before fountain encoding. The metadata therefore travels with
+// the fountain stream itself (lossless, order-independent) instead of relying
+// on any one frame arriving. Layout, before the file bytes:
+//   0..3  magic "DMN\x01"
+//   4  u16  nameLen
+//   6  u16  mimeLen
+//   8  name (UTF-8), then mime (UTF-8), then the file bytes
+
+export interface PayloadMeta {
+  name: string;
+  mime: string;
+  bytes: Uint8Array;
+}
+
+const META_MAGIC = [0x44, 0x4d, 0x4e, 0x01]; // "DMN\x01"
+export const META_HEADER_LEN = 8;
+
+export function wrapPayload(file: Uint8Array, name: string, mime: string): Uint8Array {
+  const nameBytes = new TextEncoder().encode(name);
+  const mimeBytes = new TextEncoder().encode(mime);
+  if (nameBytes.length > 0xffff || mimeBytes.length > 0xffff) {
+    throw new Error("file name or MIME type too long");
+  }
+  const out = new Uint8Array(META_HEADER_LEN + nameBytes.length + mimeBytes.length + file.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, (META_MAGIC[0]! << 24) | (META_MAGIC[1]! << 16) | (META_MAGIC[2]! << 8) | META_MAGIC[3]!, true);
+  dv.setUint16(4, nameBytes.length, true);
+  dv.setUint16(6, mimeBytes.length, true);
+  out.set(nameBytes, META_HEADER_LEN);
+  out.set(mimeBytes, META_HEADER_LEN + nameBytes.length);
+  out.set(file, META_HEADER_LEN + nameBytes.length + mimeBytes.length);
+  return out;
+}
+
+export function unwrapPayload(payload: Uint8Array): PayloadMeta {
+  if (payload.length > META_HEADER_LEN) {
+    const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const magic = dv.getUint32(0, true);
+    if (
+      magic === ((META_MAGIC[0]! << 24) | (META_MAGIC[1]! << 16) | (META_MAGIC[2]! << 8) | META_MAGIC[3]!)
+    ) {
+      const nameLen = dv.getUint16(4, true);
+      const mimeLen = dv.getUint16(6, true);
+      if (META_HEADER_LEN + nameLen + mimeLen <= payload.length) {
+        const name = new TextDecoder().decode(
+          payload.subarray(META_HEADER_LEN, META_HEADER_LEN + nameLen),
+        );
+        const mime = new TextDecoder().decode(
+          payload.subarray(META_HEADER_LEN + nameLen, META_HEADER_LEN + nameLen + mimeLen),
+        );
+        return { name, mime, bytes: payload.subarray(META_HEADER_LEN + nameLen + mimeLen) };
+      }
+    }
+  }
+  // legacy payload sent without metadata — pass through untouched
+  return { name: "file.bin", mime: "application/octet-stream", bytes: payload };
+}
+
 /** splitmix32 — deterministic across JS engines (integer ops only). */
 export function splitmix32(seed: number): () => number {
   let s = seed | 0;

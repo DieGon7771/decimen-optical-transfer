@@ -9,7 +9,7 @@
 //   cascade, so blocks-solved looks stalled and then teleports to done.
 
 import { LTDecoder } from "../shared/fountain";
-import { fnv1a, parseFrame } from "../shared/protocol";
+import { fnv1a, parseFrame, unwrapPayload } from "../shared/protocol";
 
 const OVERHEAD_EST = 1.18; // expected frames ≈ K × this (robust-soliton ε)
 
@@ -56,8 +56,8 @@ async function start() {
   metricsEl.style.display = "grid";
   const base: MediaTrackConstraints = {
     facingMode: "environment",
-    width: { ideal: captureWidth },
-    height: { ideal: Math.round((captureWidth * 3) / 4) },
+    width: { ideal: captureWidth, max: 3840 },
+    height: { ideal: Math.round((captureWidth * 3) / 4), max: 2160 },
   };
   try {
     try {
@@ -66,9 +66,12 @@ async function start() {
         video: { ...base, frameRate: { exact: captureFps } },
       });
     } catch {
+      // Chrome on Android throttles to battery-friendly profiles unless asked
+      // loudly: floor the rate at 30 and let `ideal` climb to 90/120 where the
+      // sensor supports it.
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { ...base, frameRate: { ideal: captureFps } },
+        video: { ...base, frameRate: { ideal: captureFps, min: Math.min(30, captureFps) } },
       });
     }
   } catch (err) {
@@ -169,16 +172,48 @@ function finish(payload: Uint8Array, hashOk: boolean, seconds: number, totalLen:
   stream?.getTracks().forEach((t) => t.stop());
   preview.style.display = "none";
   bar.style.width = "100%";
-  const kb = Math.round(totalLen / 1024);
-  const rate = (totalLen / 1024 / seconds).toFixed(1);
-  stats.textContent = `${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
+
+  const meta = unwrapPayload(payload);
+  const kb = Math.round(meta.bytes.length / 1024);
+  const rate = (meta.bytes.length / 1024 / seconds).toFixed(1);
+  stats.textContent = `${meta.name} · ${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · hash ${hashOk ? "verified ✓" : "MISMATCH ✗"}`;
+
+  const url = URL.createObjectURL(new Blob([meta.bytes], { type: meta.mime }));
   const heading = document.createElement("div");
   heading.className = "done";
   heading.textContent = "Transfer Complete!";
-  const img = document.createElement("img");
-  img.className = "received";
-  img.src = URL.createObjectURL(new Blob([payload as BlobPart], { type: "image/png" }));
-  result.append(heading, img);
+
+  const body = document.createElement("div");
+  if (meta.mime.startsWith("image/")) {
+    const img = document.createElement("img");
+    img.className = "received";
+    img.alt = meta.name;
+    img.src = url;
+    body.append(img);
+  } else if (meta.mime.startsWith("video/")) {
+    const v = document.createElement("video");
+    v.className = "received";
+    v.src = url;
+    v.controls = true;
+    v.playsInline = true;
+    body.append(v);
+  } else {
+    const open = document.createElement("a");
+    open.className = "download";
+    open.href = url;
+    open.target = "_blank";
+    open.rel = "noopener";
+    open.textContent = `open ${meta.name}`;
+    body.append(open);
+  }
+  const dl = document.createElement("a");
+  dl.className = "download";
+  dl.href = url;
+  dl.download = meta.name;
+  dl.textContent = `Download ${meta.name}`;
+  body.append(dl);
+
+  result.append(heading, body);
 }
 
 function updateStats() {
@@ -189,8 +224,13 @@ function updateStats() {
   };
   prune(captureTimes);
   prune(decodeTimes);
-  metric("m-cap").textContent = (captureTimes.length / 2).toFixed(0);
-  metric("m-dec").textContent = (decodeTimes.length / 2).toFixed(1);
+  // Average frame rate over the retained 2s window, straight from timestamps —
+  // no fixed divisor, so 90/120 fps (or anything the sensor delivers) reports
+  // exactly, with no software cap.
+  const fps = (a: number[]) =>
+    a.length >= 2 ? ((a.length - 1) * 1000) / (a[a.length - 1]! - a[0]!) : 0;
+  metric("m-cap").textContent = fps(captureTimes).toFixed(0);
+  metric("m-dec").textContent = fps(decodeTimes).toFixed(1);
   if (!decoder) return;
   const elapsed = (now - startTs) / 1000;
   const kbs = (decoder.framesNew * decoder.blockLen) / OVERHEAD_EST / 1024 / Math.max(0.1, elapsed);

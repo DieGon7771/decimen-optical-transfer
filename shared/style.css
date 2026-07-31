@@ -88,6 +88,31 @@ img.received {
   max-width: min(92vw, 640px);
   border-radius: 10px;
 }
+video.received {
+  max-width: min(92vw, 640px);
+  border-radius: 10px;
+  background: #000;
+  display: block;
+}
+a.download {
+  display: inline-block;
+  margin: 10px 6px 0 0;
+  color: #121009;
+  background: #ffb257;
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+#result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
 details.settings {
   width: min(92vw, 640px);
   background: #1b1712;
@@ -125,6 +150,14 @@ details.settings input[type="range"] {
   border: 1px solid #2e2718;
   border-radius: 6px;
   padding: 5px 8px;
+}
+details.settings input[type="file"] {
+  font: inherit;
+  color: #ede5d4;
+  border: 1px dashed #2e2718;
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-width: 260px;
 }
 .metrics {
   display: grid;

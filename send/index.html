@@ -17,7 +17,12 @@
           <select id="cfg-payload">
             <option value="../success.png" selected>512 KB image</option>
             <option value="../success-2mb.png">2 MB image</option>
+            <option value="custom">Carica file personale…</option>
           </select>
+        </label>
+        <label>
+          file personale
+          <input id="cfg-file" type="file" accept="image/*,video/*" />
         </label>
         <label>
           tx fps
@@ -28,6 +33,8 @@
             <option selected>24</option>
             <option>30</option>
             <option>60</option>
+            <option>90</option>
+            <option>120</option>
           </select>
         </label>
         <label>
@@ -58,6 +65,8 @@
       <div class="hint" style="text-align: left; padding-top: 8px">
         Changes restart the stream — the receiver resets automatically (new
         session id in the frame headers; that's the fountain protocol's gift).
+        Pick "Carica file personale…" or choose an image/video below it to send
+        your own file (name + MIME type ride along in the payload metadata).
       </div>
     </details>
     <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
