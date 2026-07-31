@@ -213,7 +213,7 @@ function collectThumb(header: FrameHeader, block: Uint8Array) {
 function showCover() {
   if (coverShown || !thumbBuf) return;
   coverShown = true;
-  coverUrl = URL.createObjectURL(new Blob([thumbBuf], { type: "image/jpeg" }));
+  coverUrl = URL.createObjectURL(new Blob([thumbBuf.slice()], { type: "image/jpeg" }));
   coverImg.src = coverUrl;
   cover.style.display = "block";
   coverImg.style.filter = "blur(20px)"; // sharpens as progress climbs

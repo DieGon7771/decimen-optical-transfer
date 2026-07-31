@@ -67,7 +67,7 @@ async function drawThumb(source: CanvasImageSource, w: number, h: number): Promi
 
 async function imageThumb(bytes: Uint8Array, mime: string): Promise<Uint8Array | null> {
   try {
-    const bmp = await createImageBitmap(new Blob([bytes], { type: mime }));
+    const bmp = await createImageBitmap(new Blob([bytes.slice()], { type: mime }));
     const scale = Math.min(1, 150 / bmp.width);
     const w = Math.max(1, Math.round(bmp.width * scale));
     const h = Math.max(1, Math.round(bmp.height * scale));
@@ -81,7 +81,7 @@ async function imageThumb(bytes: Uint8Array, mime: string): Promise<Uint8Array |
 
 async function videoThumb(bytes: Uint8Array, mime: string): Promise<Uint8Array | null> {
   try {
-    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    const url = URL.createObjectURL(new Blob([bytes.slice()], { type: mime }));
     const v = document.createElement("video");
     v.src = url;
     v.muted = true;
