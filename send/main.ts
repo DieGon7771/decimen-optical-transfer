@@ -194,7 +194,15 @@ async function startStream() {
   let scale = 1;
   const staging = document.createElement("canvas");
   const queue: ImageData[] = [];
-  let nextSeq = 0;
+  // Two sub-streams multiplexed by seq value: seq < tnBlocks is a thumbnail
+  // chunk, seq >= tnBlocks is a fountain frame. Thumbnail chunks are re-emitted
+  // continuously (every THUMB_EVERYth frame) so the receiver still collects the
+  // cover after its camera locks on — a single burst is inevitably dropped
+  // during autofocus/warm-up and would never be retransmitted.
+  const THUMB_EVERY = 10;
+  let frameN = 0;
+  let thumbIdx = 0;
+  let fountainSeq = tnBlocks;
 
   const sizeCanvas = () => {
     const dpr = window.devicePixelRatio || 1;
@@ -210,17 +218,20 @@ async function startStream() {
   };
 
   const makeFrame = (): ImageData => {
+    let seq: number;
     let block: Uint8Array;
-    if (nextSeq < tnBlocks) {
-      // reserved leading frames carry raw thumbnail bytes (progressive preview)
-      const start = nextSeq * blockLen;
+    if (tnBlocks > 0 && frameN % THUMB_EVERY === 0) {
+      seq = thumbIdx;
+      thumbIdx = (thumbIdx + 1) % tnBlocks;
+      const start = seq * blockLen;
       block = new Uint8Array(blockLen);
       block.set(thumb!.subarray(start, Math.min(start + blockLen, thumbLen)));
     } else {
-      block = encoder.encode(nextSeq);
+      seq = fountainSeq++;
+      block = encoder.encode(seq);
     }
-    const bytes = packFrame({ ...header, seq: nextSeq }, block);
-    nextSeq++;
+    frameN++;
+    const bytes = packFrame({ ...header, seq }, block);
     const qr = QRCode.create([{ data: bytes, mode: "byte" } as unknown as QRCode.QRCodeSegment], {
       errorCorrectionLevel: ecc,
       version,

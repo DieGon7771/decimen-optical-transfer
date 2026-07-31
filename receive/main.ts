@@ -27,6 +27,7 @@ const bar = document.getElementById("bar")!;
 const result = document.getElementById("result")!;
 const cover = document.getElementById("cover")!;
 const coverImg = document.getElementById("cover-img") as HTMLImageElement;
+const coverStatus = document.getElementById("cover-status")!;
 const settings = document.getElementById("settings") as HTMLDetailsElement;
 const metricsEl = document.getElementById("metrics")!;
 const metric = (id: string) => document.getElementById(id)!;
@@ -207,12 +208,14 @@ function collectThumb(header: FrameHeader, block: Uint8Array) {
   const start = i * header.blockLen;
   const len = Math.min(header.blockLen, header.thumbLen - start);
   thumbBuf.set(block.subarray(0, len), start);
+  coverStatus.textContent = `preview ${thumbGot}/${tnBlocks}…`;
   if (thumbGot >= tnBlocks) showCover();
 }
 
 function showCover() {
   if (coverShown || !thumbBuf) return;
   coverShown = true;
+  coverStatus.textContent = "";
   coverUrl = URL.createObjectURL(new Blob([thumbBuf.slice()], { type: "image/jpeg" }));
   coverImg.src = coverUrl;
   cover.style.display = "block";
