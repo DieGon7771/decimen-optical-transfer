@@ -2,17 +2,24 @@
 // handshake — the receiver locks onto a stream mid-flight, and a new session
 // id on any frame simply starts a fresh transfer.
 //
-// Layout (little-endian), 20 bytes, followed by `blockLen` payload bytes:
+// Layout (little-endian), 24 bytes, followed by `blockLen` payload bytes:
 //   0  u8   magic 0xD1
 //   1  u8   magic 0x0C
 //   2  u16  sessionId   random per sender start
 //   4  u32  seq         drives the fountain PRNG (see fountain.ts)
 //   8  u16  k           source block count
 //  10  u16  blockLen    payload bytes per frame
-//  12  u32  totalLen    file length in bytes
+//  12  u32  totalLen    file length in bytes (metadata-wrapped payload)
 //  16  u32  payloadFnv  FNV-1a of the whole file — verified on completion
+//  20  u32  thumbLen    thumbnail byte length (0 = none)
+//
+// Thumbnail frames: the sender reserves the leading sequence numbers
+// 0..tnBlocks-1 (tnBlocks = ceil(thumbLen / blockLen)) for a progressive
+// preview. Those frames carry raw thumbnail bytes — NOT fountain-coded — so
+// the receiver can show the cover while the fountain stream is still
+// decoding. Fountain frames then start at seq = tnBlocks.
 
-export const HEADER_LEN = 20;
+export const HEADER_LEN = 24;
 const MAGIC0 = 0xd1;
 const MAGIC1 = 0x0c;
 
@@ -23,6 +30,7 @@ export interface FrameHeader {
   blockLen: number;
   totalLen: number;
   payloadFnv: number;
+  thumbLen: number;
 }
 
 export function packFrame(h: FrameHeader, block: Uint8Array): Uint8Array {
@@ -36,6 +44,7 @@ export function packFrame(h: FrameHeader, block: Uint8Array): Uint8Array {
   dv.setUint16(10, h.blockLen, true);
   dv.setUint32(12, h.totalLen, true);
   dv.setUint32(16, h.payloadFnv, true);
+  dv.setUint32(20, h.thumbLen, true);
   out.set(block, HEADER_LEN);
   return out;
 }
@@ -53,6 +62,7 @@ export function parseFrame(
     blockLen: dv.getUint16(10, true),
     totalLen: dv.getUint32(12, true),
     payloadFnv: dv.getUint32(16, true),
+    thumbLen: dv.getUint32(20, true),
   };
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;

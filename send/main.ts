@@ -35,8 +35,10 @@ const cfgEcc = document.getElementById("cfg-ecc") as HTMLSelectElement;
 const cfgSize = document.getElementById("cfg-size") as HTMLInputElement;
 
 const payloadCache = new Map<string, Uint8Array>();
+const thumbCache = new Map<string, Uint8Array | null>();
 let generation = 0; // bumped on every restart; stale loops see it and die
-let custom: { bytes: Uint8Array; name: string; mime: string } | null = null;
+let custom: { bytes: Uint8Array; name: string; mime: string; thumb?: Uint8Array | null } | null =
+  null;
 
 async function loadPayload(url: string): Promise<Uint8Array | null> {
   const hit = payloadCache.get(url);
@@ -46,6 +48,73 @@ async function loadPayload(url: string): Promise<Uint8Array | null> {
   const bytes = new Uint8Array(await res.arrayBuffer());
   payloadCache.set(url, bytes);
   return bytes;
+}
+
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const bin = atob(dataUrl.split(",")[1]!);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function drawThumb(source: CanvasImageSource, w: number, h: number): Promise<Uint8Array> {
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  c.getContext("2d")!.drawImage(source, 0, 0, w, h);
+  return dataUrlToBytes(c.toDataURL("image/jpeg", 0.3));
+}
+
+async function imageThumb(bytes: Uint8Array, mime: string): Promise<Uint8Array | null> {
+  try {
+    const bmp = await createImageBitmap(new Blob([bytes], { type: mime }));
+    const scale = Math.min(1, 150 / bmp.width);
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    const out = await drawThumb(bmp, w, h);
+    bmp.close();
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+async function videoThumb(bytes: Uint8Array, mime: string): Promise<Uint8Array | null> {
+  try {
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    const v = document.createElement("video");
+    v.src = url;
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "auto";
+    await new Promise<void>((res, rej) => {
+      v.onloadeddata = () => res();
+      v.onerror = () => rej(new Error("video load failed"));
+    });
+    if (v.currentTime < 0.5) {
+      v.currentTime = 0.5; // capture the first useful frame
+      await Promise.race([
+        new Promise<void>((res) => {
+          v.onseeked = () => res();
+        }),
+        new Promise<void>((res) => setTimeout(res, 3000)),
+      ]);
+    }
+    const scale = Math.min(1, 150 / Math.max(1, v.videoWidth));
+    const w = Math.max(1, Math.round(v.videoWidth * scale));
+    const h = Math.max(1, Math.round(v.videoHeight * scale));
+    const out = await drawThumb(v, w, h);
+    URL.revokeObjectURL(url);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+async function makeThumb(bytes: Uint8Array, mime: string): Promise<Uint8Array | null> {
+  if (mime.startsWith("image/")) return imageThumb(bytes, mime);
+  if (mime.startsWith("video/")) return videoThumb(bytes, mime);
+  return null;
 }
 
 async function main() {
@@ -76,6 +145,7 @@ async function startStream() {
   let raw: Uint8Array | null;
   let name: string;
   let mime: string;
+  let thumb: Uint8Array | null;
   if (cfgPayload.value === "custom") {
     if (!custom) {
       specs.textContent = "✗ pick a file below to send it";
@@ -84,6 +154,8 @@ async function startStream() {
     raw = custom.bytes;
     name = custom.name;
     mime = custom.mime;
+    if (custom.thumb === undefined) custom.thumb = await makeThumb(raw, mime);
+    thumb = custom.thumb;
   } else {
     raw = await loadPayload(cfgPayload.value);
     if (!raw) {
@@ -92,6 +164,8 @@ async function startStream() {
     }
     name = cfgPayload.value.split("/").pop()!;
     mime = cfgPayload.value.toLowerCase().endsWith(".png") ? "image/png" : "application/octet-stream";
+    if (!thumbCache.has(cfgPayload.value)) thumbCache.set(cfgPayload.value, await makeThumb(raw, mime));
+    thumb = thumbCache.get(cfgPayload.value)!;
   }
   if (gen !== generation) return; // superseded while fetching
   const txFps = Number(cfgFps.value);
@@ -102,6 +176,8 @@ async function startStream() {
   const payload = wrapPayload(raw, name, mime);
   const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
   const blockLen = frameBytes - HEADER_LEN;
+  const thumbLen = thumb?.length ?? 0;
+  const tnBlocks = Math.ceil(thumbLen / blockLen);
   const encoder = new LTEncoder(payload, blockLen, sessionId);
   const header: FrameHeader = {
     sessionId,
@@ -110,6 +186,7 @@ async function startStream() {
     blockLen,
     totalLen: payload.length,
     payloadFnv: fnv1a(payload),
+    thumbLen,
   };
 
   let version: number | undefined; // locked after the first frame
@@ -133,7 +210,16 @@ async function startStream() {
   };
 
   const makeFrame = (): ImageData => {
-    const bytes = packFrame({ ...header, seq: nextSeq }, encoder.encode(nextSeq));
+    let block: Uint8Array;
+    if (nextSeq < tnBlocks) {
+      // reserved leading frames carry raw thumbnail bytes (progressive preview)
+      const start = nextSeq * blockLen;
+      block = new Uint8Array(blockLen);
+      block.set(thumb!.subarray(start, Math.min(start + blockLen, thumbLen)));
+    } else {
+      block = encoder.encode(nextSeq);
+    }
+    const bytes = packFrame({ ...header, seq: nextSeq }, block);
     nextSeq++;
     const qr = QRCode.create([{ data: bytes, mode: "byte" } as unknown as QRCode.QRCodeSegment], {
       errorCorrectionLevel: ecc,
@@ -146,7 +232,7 @@ async function startStream() {
       sizeCanvas();
       specs.textContent =
         `${txFps} FPS · ${frameBytes} bytes per frame · V${version} · ECC ${ecc} · ` +
-        `${name} (${Math.round(raw.length / 1024)} KB) · K=${encoder.k}`;
+        `${name} (${Math.round(raw.length / 1024)} KB) · preview ${thumbLen}B · K=${encoder.k}`;
     }
     const size = qr.modules.size;
     const data = qr.modules.data;

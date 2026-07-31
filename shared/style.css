@@ -113,6 +113,10 @@ a.download {
   align-items: center;
   gap: 6px;
 }
+.cover img {
+  display: block;
+  transition: filter 0.3s linear;
+}
 details.settings {
   width: min(92vw, 640px);
   background: #1b1712;

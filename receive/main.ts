@@ -9,7 +9,12 @@
 //   cascade, so blocks-solved looks stalled and then teleports to done.
 
 import { LTDecoder } from "../shared/fountain";
-import { fnv1a, parseFrame, unwrapPayload } from "../shared/protocol";
+import {
+  fnv1a,
+  parseFrame,
+  unwrapPayload,
+  type FrameHeader,
+} from "../shared/protocol";
 
 const OVERHEAD_EST = 1.18; // expected frames ≈ K × this (robust-soliton ε)
 
@@ -20,6 +25,8 @@ const stats = document.getElementById("stats")!;
 const progressEl = document.getElementById("progress")!;
 const bar = document.getElementById("bar")!;
 const result = document.getElementById("result")!;
+const cover = document.getElementById("cover")!;
+const coverImg = document.getElementById("cover-img") as HTMLImageElement;
 const settings = document.getElementById("settings") as HTMLDetailsElement;
 const metricsEl = document.getElementById("metrics")!;
 const metric = (id: string) => document.getElementById(id)!;
@@ -30,6 +37,15 @@ let sessionId = 0;
 let startTs = 0;
 let captureGen = 0;
 let done = false;
+
+// Progressive-preview state: leading frames (seq < tnBlocks) carry raw
+// thumbnail chunks outside the fountain stream.
+let tnBlocks = 0;
+let thumbBuf: Uint8Array | null = null;
+let thumbSeen: Uint8Array | null = null;
+let thumbGot = 0;
+let coverShown = false;
+let coverUrl: string | null = null;
 
 const workers: Worker[] = [];
 const busy: boolean[] = [];
@@ -153,6 +169,18 @@ function onDecoded(bytes: Uint8Array) {
     sessionId = header.sessionId;
     startTs = performance.now();
     progressEl.style.display = "block";
+    tnBlocks = Math.ceil(header.thumbLen / header.blockLen);
+    thumbBuf = null;
+    thumbSeen = null;
+    thumbGot = 0;
+    coverShown = false;
+    if (coverUrl) URL.revokeObjectURL(coverUrl);
+    coverUrl = null;
+    cover.style.display = "none";
+  }
+  if (header.thumbLen > 0 && header.seq < tnBlocks) {
+    collectThumb(header, block);
+    return;
   }
   decoder.addFrame(header.seq, block);
   const progress = Math.min(0.99, decoder.framesNew / (decoder.k * OVERHEAD_EST));
@@ -166,12 +194,40 @@ function onDecoded(bytes: Uint8Array) {
   }
 }
 
+function collectThumb(header: FrameHeader, block: Uint8Array) {
+  if (thumbBuf === null) {
+    thumbBuf = new Uint8Array(header.thumbLen);
+    thumbSeen = new Uint8Array(tnBlocks);
+    thumbGot = 0;
+  }
+  const i = header.seq;
+  if (thumbSeen![i]) return;
+  thumbSeen![i] = 1;
+  thumbGot++;
+  const start = i * header.blockLen;
+  const len = Math.min(header.blockLen, header.thumbLen - start);
+  thumbBuf.set(block.subarray(0, len), start);
+  if (thumbGot >= tnBlocks) showCover();
+}
+
+function showCover() {
+  if (coverShown || !thumbBuf) return;
+  coverShown = true;
+  coverUrl = URL.createObjectURL(new Blob([thumbBuf], { type: "image/jpeg" }));
+  coverImg.src = coverUrl;
+  cover.style.display = "block";
+  coverImg.style.filter = "blur(20px)"; // sharpens as progress climbs
+}
+
 function finish(payload: Uint8Array, hashOk: boolean, seconds: number, totalLen: number) {
   done = true;
   captureGen++;
   stream?.getTracks().forEach((t) => t.stop());
   preview.style.display = "none";
   bar.style.width = "100%";
+  if (coverUrl) URL.revokeObjectURL(coverUrl);
+  coverUrl = null;
+  cover.style.display = "none";
 
   const meta = unwrapPayload(payload);
   const kb = Math.round(meta.bytes.length / 1024);
@@ -232,6 +288,9 @@ function updateStats() {
   metric("m-cap").textContent = fps(captureTimes).toFixed(0);
   metric("m-dec").textContent = fps(decodeTimes).toFixed(1);
   if (!decoder) return;
+  // Blur fades proportionally to fountain progress: 20px at 0%, 0px at 100%.
+  const progress = Math.min(1, decoder.framesNew / (decoder.k * OVERHEAD_EST));
+  if (coverShown) coverImg.style.filter = `blur(${(20 * (1 - progress)).toFixed(1)}px)`;
   const elapsed = (now - startTs) / 1000;
   const kbs = (decoder.framesNew * decoder.blockLen) / OVERHEAD_EST / 1024 / Math.max(0.1, elapsed);
   metric("m-rate").textContent = `${kbs.toFixed(1)} KB/s`;
