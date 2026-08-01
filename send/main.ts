@@ -16,11 +16,13 @@ import QRCode from "qrcode";
 import { LTEncoder } from "../shared/fountain";
 import {
   HEADER_LEN,
+  FLAG_COLOR,
   fnv1a,
   packFrame,
   wrapPayload,
   type FrameHeader,
 } from "../shared/protocol";
+import { matrixSizeFor, renderColorFrame } from "../shared/color";
 
 const MARGIN = 4; // quiet-zone modules
 const LOOKAHEAD = 5;
@@ -33,6 +35,7 @@ const cfgFps = document.getElementById("cfg-fps") as HTMLSelectElement;
 const cfgBytes = document.getElementById("cfg-bytes") as HTMLSelectElement;
 const cfgEcc = document.getElementById("cfg-ecc") as HTMLSelectElement;
 const cfgSize = document.getElementById("cfg-size") as HTMLInputElement;
+const cfgColor = document.getElementById("cfg-color") as HTMLInputElement;
 
 const payloadCache = new Map<string, Uint8Array>();
 const thumbCache = new Map<string, Uint8Array | null>();
@@ -118,7 +121,7 @@ async function makeThumb(bytes: Uint8Array, mime: string): Promise<Uint8Array | 
 }
 
 async function main() {
-  for (const el of [cfgPayload, cfgFps, cfgBytes, cfgEcc, cfgSize]) {
+  for (const el of [cfgPayload, cfgFps, cfgBytes, cfgEcc, cfgSize, cfgColor]) {
     el.addEventListener("change", () => void startStream());
   }
   cfgFile.addEventListener("change", () => void onFilePicked());
@@ -172,6 +175,7 @@ async function startStream() {
   const frameBytes = Number(cfgBytes.value);
   const ecc = cfgEcc.value as "L" | "M" | "Q" | "H";
   const displayPx = Number(cfgSize.value);
+  const colorMode = cfgColor.checked;
 
   const payload = wrapPayload(raw, name, mime);
   const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
@@ -187,6 +191,7 @@ async function startStream() {
     totalLen: payload.length,
     payloadFnv: fnv1a(payload),
     thumbLen,
+    flags: colorMode ? FLAG_COLOR : 0,
   };
 
   let version: number | undefined; // locked after the first frame
@@ -232,6 +237,17 @@ async function startStream() {
     }
     frameN++;
     const bytes = packFrame({ ...header, seq }, block);
+    if (colorMode) {
+      const img = renderColorFrame(bytes, MARGIN);
+      if (modules === 0) {
+        modules = matrixSizeFor(bytes.length);
+        sizeCanvas();
+        specs.textContent =
+          `COLOR ${txFps} FPS · ${frameBytes} bytes/frame · ${modules}×${modules} · ` +
+          `${name} (${Math.round(raw.length / 1024)} KB) · preview ${thumbLen}B · K=${encoder.k}`;
+      }
+      return img;
+    }
     const qr = QRCode.create([{ data: bytes, mode: "byte" } as unknown as QRCode.QRCodeSegment], {
       errorCorrectionLevel: ecc,
       version,

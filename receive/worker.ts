@@ -5,6 +5,7 @@
 
 import wasmUrl from "zxing-wasm/reader/zxing_reader.wasm?url";
 import { prepareZXingModule, readBarcodes } from "zxing-wasm/reader";
+import { decodeColorFrame } from "../shared/color";
 
 prepareZXingModule({
   overrides: {
@@ -19,14 +20,26 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = async (e: MessageEvent) => {
-  const { id, buf, w, h } = e.data as { id: number; buf: ArrayBuffer; w: number; h: number };
+  const { id, buf, w, h, color } = e.data as {
+    id: number;
+    buf: ArrayBuffer;
+    w: number;
+    h: number;
+    color: boolean;
+  };
+  if (color) {
+    // Experimental color matrix: custom finder detection + color sampling.
+    const res = decodeColorFrame(new ImageData(new Uint8ClampedArray(buf), w, h));
+    ctx.postMessage({ id, bytes: res ? res.bytes : null, confidence: res ? res.confidence : 0 });
+    return;
+  }
   try {
     const img = new ImageData(new Uint8ClampedArray(buf), w, h);
     const results = await readBarcodes(img, { formats: ["QRCode"], maxNumberOfSymbols: 1 });
     const r = results.find((x) => x.isValid && x.bytes.length > 0);
-    ctx.postMessage({ id, bytes: r ? r.bytes : null });
+    ctx.postMessage({ id, bytes: r ? r.bytes : null, confidence: 1 });
   } catch {
-    ctx.postMessage({ id, bytes: null });
+    ctx.postMessage({ id, bytes: null, confidence: 0 });
   }
 };
 

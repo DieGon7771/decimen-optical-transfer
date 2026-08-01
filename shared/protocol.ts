@@ -2,7 +2,7 @@
 // handshake — the receiver locks onto a stream mid-flight, and a new session
 // id on any frame simply starts a fresh transfer.
 //
-// Layout (little-endian), 24 bytes, followed by `blockLen` payload bytes:
+// Layout (little-endian), 25 bytes, followed by `blockLen` payload bytes:
 //   0  u8   magic 0xD1
 //   1  u8   magic 0x0C
 //   2  u16  sessionId   random per sender start
@@ -12,6 +12,7 @@
 //  12  u32  totalLen    file length in bytes (metadata-wrapped payload)
 //  16  u32  payloadFnv  FNV-1a of the whole file — verified on completion
 //  20  u32  thumbLen    thumbnail byte length (0 = none)
+//  24  u8   flags       bit 0 = FLAG_COLOR (experimental color matrix mode)
 //
 // Thumbnail frames: the sender reserves the leading sequence numbers
 // 0..tnBlocks-1 (tnBlocks = ceil(thumbLen / blockLen)) for a progressive
@@ -19,9 +20,11 @@
 // the receiver can show the cover while the fountain stream is still
 // decoding. Fountain frames then start at seq = tnBlocks.
 
-export const HEADER_LEN = 24;
+export const HEADER_LEN = 25;
 const MAGIC0 = 0xd1;
 const MAGIC1 = 0x0c;
+
+export const FLAG_COLOR = 0x01; // experimental 4-color / 2-bit-per-module mode
 
 export interface FrameHeader {
   sessionId: number;
@@ -31,6 +34,7 @@ export interface FrameHeader {
   totalLen: number;
   payloadFnv: number;
   thumbLen: number;
+  flags: number;
 }
 
 export function packFrame(h: FrameHeader, block: Uint8Array): Uint8Array {
@@ -45,6 +49,7 @@ export function packFrame(h: FrameHeader, block: Uint8Array): Uint8Array {
   dv.setUint32(12, h.totalLen, true);
   dv.setUint32(16, h.payloadFnv, true);
   dv.setUint32(20, h.thumbLen, true);
+  dv.setUint8(24, h.flags);
   out.set(block, HEADER_LEN);
   return out;
 }
@@ -63,6 +68,7 @@ export function parseFrame(
     totalLen: dv.getUint32(12, true),
     payloadFnv: dv.getUint32(16, true),
     thumbLen: dv.getUint32(20, true),
+    flags: dv.getUint8(24),
   };
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;

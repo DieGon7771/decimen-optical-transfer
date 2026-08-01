@@ -146,6 +146,25 @@ details.settings label {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+details.settings label.switch {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+details.settings label.switch input {
+  accent-color: #ffb257;
+}
+.warn {
+  width: min(92vw, 640px);
+  color: #121009;
+  background: #ffb257;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
 details.settings select,
 details.settings input[type="range"] {
   font: inherit;

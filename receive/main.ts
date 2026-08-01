@@ -15,6 +15,7 @@ import {
   unwrapPayload,
   type FrameHeader,
 } from "../shared/protocol";
+import { hasStrongColor } from "../shared/color";
 
 const OVERHEAD_EST = 1.18; // expected frames ≈ K × this (robust-soliton ε)
 
@@ -28,6 +29,8 @@ const result = document.getElementById("result")!;
 const cover = document.getElementById("cover")!;
 const coverImg = document.getElementById("cover-img") as HTMLImageElement;
 const coverStatus = document.getElementById("cover-status")!;
+const colorWarn = document.getElementById("color-warn")!;
+const cfgColor = document.getElementById("cfg-color") as HTMLInputElement;
 const settings = document.getElementById("settings") as HTMLDetailsElement;
 const metricsEl = document.getElementById("metrics")!;
 const metric = (id: string) => document.getElementById(id)!;
@@ -38,6 +41,9 @@ let sessionId = 0;
 let startTs = 0;
 let captureGen = 0;
 let done = false;
+let colorMode = false;
+let colorFails = 0;
+let capturedN = 0;
 
 // Progressive-preview state: leading frames (seq < tnBlocks) carry raw
 // thumbnail chunks outside the fountain stream.
@@ -67,6 +73,10 @@ async function start() {
   const captureWidth = Number((document.getElementById("cfg-width") as HTMLSelectElement).value);
   const captureFps = Number((document.getElementById("cfg-capfps") as HTMLSelectElement).value);
   const workerCount = Number((document.getElementById("cfg-workers") as HTMLSelectElement).value);
+  colorMode = cfgColor.checked;
+  colorFails = 0;
+  capturedN = 0;
+  colorWarn.style.display = "none";
   settings.style.display = "none";
   startBtn.style.display = "none";
   preview.style.display = "block";
@@ -103,10 +113,25 @@ async function start() {
     const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
     const slot = i;
     w.onmessage = (e: MessageEvent) => {
-      const { id, bytes } = e.data as { id: number; bytes: Uint8Array | null };
+      const { id, bytes, confidence } = e.data as {
+        id: number;
+        bytes: Uint8Array | null;
+        confidence: number;
+      };
       if (id === -1) return; // warm-up
       busy[slot] = false;
-      if (bytes) onDecoded(bytes);
+      if (bytes) {
+        colorFails = 0;
+        colorWarn.style.display = "none";
+        onDecoded(bytes, confidence);
+      } else if (colorMode) {
+        colorFails++;
+        if (colorFails > 12) {
+          colorWarn.textContent =
+            "Lettura colori poco affidabile — passa alla modalità B/N o riavvia il flusso.";
+          colorWarn.style.display = "block";
+        }
+      }
     };
     workers.push(w);
     busy.push(false);
@@ -154,13 +179,18 @@ function captureFrame() {
   const ctx = grab.getContext("2d", { willReadFrequently: true })!;
   ctx.drawImage(video, 0, 0);
   const img = ctx.getImageData(0, 0, vw, vh);
+  if (!colorMode && capturedN++ % 15 === 0 && hasStrongColor(img)) {
+    // B/N mode but the sender looks colored — nudge the user.
+    colorWarn.textContent = "Stream a colori rilevato — attiva la Modalità Colori.";
+    colorWarn.style.display = "block";
+  }
   busy[slot] = true;
-  workers[slot]!.postMessage({ id: frameId++, buf: img.data.buffer, w: vw, h: vh }, [
+  workers[slot]!.postMessage({ id: frameId++, buf: img.data.buffer, w: vw, h: vh, color: colorMode }, [
     img.data.buffer,
   ]);
 }
 
-function onDecoded(bytes: Uint8Array) {
+function onDecoded(bytes: Uint8Array, confidence = 1) {
   decodeTimes.push(performance.now());
   const parsed = parseFrame(bytes);
   if (!parsed || done) return;
