@@ -9,7 +9,7 @@
 //
 // N = ceil(sqrt(frameBytes*4 + 192)) with 192 = 3 finder footprints (8×8).
 
-import { HEADER_LEN, parseFrame } from "./protocol";
+import { HEADER_LEN, parseFrame, tryFrameHeader } from "./protocol";
 
 export const COLOR_PALETTE: readonly [number, number, number][] = [
   [255, 255, 255], // 00
@@ -418,14 +418,14 @@ export function decodeColorFrame(img: ImageData): ColorDecodeResult | null {
     if (n < FINDER + 4) continue;
     const mod = dTR / (n - 8);
     const head = sample(img, n, mod, tl, HEADER_LEN);
-    const parsed = parseFrame(head.bytes);
+    const parsed = tryFrameHeader(head.bytes); // lenient — the probe is exactly HEADER_LEN bytes
     if (!parsed) continue;
-    const frameBytes = HEADER_LEN + parsed.header.blockLen;
+    const frameBytes = HEADER_LEN + parsed.blockLen;
     const nExact = matrixSizeFor(frameBytes);
     const modExact = dTR / (nExact - 8);
     const res = sample(img, nExact, modExact, tl, frameBytes);
-    const re = parseFrame(res.bytes.subarray(0, HEADER_LEN));
-    if (re && re.header.sessionId === parsed.header.sessionId) {
+    const re = parseFrame(res.bytes); // full frame → exact-length check passes
+    if (re && re.header.sessionId === parsed.sessionId) {
       return { bytes: res.bytes, confidence: res.confidence };
     }
   }

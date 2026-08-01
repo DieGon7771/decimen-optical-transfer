@@ -57,7 +57,17 @@ export function packFrame(h: FrameHeader, block: Uint8Array): Uint8Array {
 export function parseFrame(
   bytes: Uint8Array,
 ): { header: FrameHeader; block: Uint8Array } | null {
-  if (bytes.length <= HEADER_LEN) return null;
+  const header = tryFrameHeader(bytes);
+  if (!header) return null;
+  if (bytes.length !== HEADER_LEN + header.blockLen) return null;
+  return { header, block: bytes.subarray(HEADER_LEN) };
+}
+
+/** Lenient header parse: magic + field sanity only, no exact-length check.
+ * Used by the color-matrix decoder to identify a frame's N while it is still
+ * probing candidate grid sizes (before it knows blockLen). */
+export function tryFrameHeader(bytes: Uint8Array): FrameHeader | null {
+  if (bytes.length < HEADER_LEN) return null;
   if (bytes[0] !== MAGIC0 || bytes[1] !== MAGIC1) return null;
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const header: FrameHeader = {
@@ -71,8 +81,7 @@ export function parseFrame(
     flags: dv.getUint8(24),
   };
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
-  if (bytes.length !== HEADER_LEN + header.blockLen) return null;
-  return { header, block: bytes.subarray(HEADER_LEN) };
+  return header;
 }
 
 export function fnv1a(bytes: Uint8Array): number {
